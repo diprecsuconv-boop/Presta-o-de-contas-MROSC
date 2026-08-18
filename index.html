@@ -345,6 +345,13 @@ function fmtMoney(n){if(!n)return "—";if(n>=1e6)return "R$ "+(n/1e6).toFixed(1
 function fmtMoneyFull(n){return "R$ "+n.toLocaleString("pt-BR",{maximumFractionDigits:0});}
 let INSTR="tf",records=[];
 function isFinal(row){return String(row[ID[INSTR].status]||"").toLowerCase().includes("finaliz");}
+function fase(row){
+  const st=String(row[ID[INSTR].status]||"").trim();
+  if(isFinal(row))return "final";
+  if(st==="Em execução")return "execucao";
+  if(st==="Em análise pela Diretoria de Celebração")return "celebracao";
+  return "pc"; // em prestação de contas (análise técnica, aguardando relatórios, etc.)
+}
 function phaseStatus(prazo){if(!prazo)return {st:"semprazo"};const d=days(prazo,HOJE);if(prazo<HOJE)return {st:"vencido",dias:days(HOJE,prazo)};if(d<=30)return {st:"avencer",dias:d};return {st:"noprazo",dias:d};}
 
 function buildRecord(row){
@@ -389,7 +396,7 @@ function buildRecord(row){
 const SIT_META={vencido:{l:"Prazo extrapolado",c:"var(--venc)"},avencer:{l:"Prazo próximo",c:"var(--aven)"},emdia:{l:"Dentro do prazo",c:"var(--dia)"},concluido:{l:"Concluído",c:"var(--conc)"}};
 
 /* filtros */
-const F={sit:"",ger:"",status:"",busca:"",bloco:false,fin:""};
+const F={sit:"",ger:"",status:"",busca:"",bloco:false,fase:""};
 function uniq(a){return[...new Set(a)];}
 function fillSel(id,items,all){const s=document.getElementById(id);const cur=s.value;s.innerHTML=`<option value="">${all}</option>`+items.map(i=>`<option value="${(Array.isArray(i)?i[0]:i).replace(/"/g,'&quot;')}">${Array.isArray(i)?i[1]:i}</option>`).join("");s.value=cur;}
 function buildFilters(){
@@ -401,8 +408,7 @@ function filtered(){
   const q=F.busca.toLowerCase().trim();
   return records.filter(r=>{
     if(F.bloco&&!r.bloco)return false;
-    if(F.fin==="sim"&&!isFinal(r.row))return false;
-    if(F.fin==="nao"&&isFinal(r.row))return false;
+    if(F.fase&&fase(r.row)!==F.fase)return false;
     if(F.sit&&r.sit!==F.sit)return false;
     if(F.ger&&!r.ativos.some(p=>p.resp===F.ger))return false;
     if(F.status&&r.status!==F.status)return false;
@@ -421,20 +427,30 @@ function rerender(){const data=filtered();renderKPIs();renderStatusChart();rende
 
 function renderKPIs(){
   const total=records.length;
-  const fin=records.filter(r=>isFinal(r.row)).length;
-  const and=total-fin;
+  const cnt=fz=>records.filter(r=>fase(r.row)===fz).length;
+  const exec=cnt("execucao"),pc=cnt("pc"),celeb=cnt("celebracao"),fin=cnt("final");
   const venc=records.filter(r=>r.sit==="vencido").length;
   const bloco=records.filter(r=>r.bloco).length;
   const valor=records.reduce((s,r)=>s+(r.valor||0),0);
-  const noFilter=!F.sit&&!F.ger&&!F.status&&!F.busca&&!F.bloco&&!F.fin;
+  const noFilter=!F.sit&&!F.ger&&!F.status&&!F.busca&&!F.bloco&&!F.fase;
   let cards=[{n:total,l:"Processos",tag:"ver todos",c:"var(--brand)",act:"all",active:noFilter}];
-  if(INSTR==="tf")cards.push({n:fmtMoney(valor),l:"Valor acompanhado",tag:"soma dos termos",c:"var(--gold)",money:true});
-  cards.push({n:and,l:"Em andamento",tag:"não finalizados",c:"var(--g-com)",act:"fin-nao",active:F.fin==="nao"});
-  cards.push({n:fin,l:"Finalizados",tag:"tramitação concluída",c:"var(--conc)",act:"fin-sim",active:F.fin==="sim"});
-  cards.push({n:venc,l:"Prazo extrapolado",tag:"exigem ação",c:"var(--venc)",act:"sit-vencido",active:F.sit==="vencido"});
-  if(INSTR==="tf")cards.push({n:bloco,l:"No bloco",tag:"aguardando apreciação",c:"var(--bloco)",act:"bloco",active:F.bloco});
-  document.getElementById("kpis").style.gridTemplateColumns=`repeat(${cards.length},1fr)`;
-  document.getElementById("kpis").innerHTML=cards.map(c=>
+  if(INSTR==="tf"){
+    cards.push({n:fmtMoney(valor),l:"Valor acompanhado",tag:"soma dos termos",c:"var(--gold)",money:true});
+    cards.push({n:exec,l:"Em execução",tag:"objeto em andamento",c:"var(--g-com)",act:"fase-execucao",active:F.fase==="execucao"});
+    cards.push({n:pc,l:"Em prestação de contas",tag:"após a execução",c:"var(--aven)",act:"fase-pc",active:F.fase==="pc"});
+    cards.push({n:fin,l:"Finalizados",tag:"tramitação concluída",c:"var(--conc)",act:"fase-final",active:F.fase==="final"});
+    cards.push({n:venc,l:"Prazo extrapolado",tag:"exigem ação",c:"var(--venc)",act:"sit-vencido",active:F.sit==="vencido"});
+    cards.push({n:bloco,l:"No bloco",tag:"aguardando apreciação",c:"var(--bloco)",act:"bloco",active:F.bloco});
+  } else {
+    cards.push({n:celeb,l:"Em análise (Celebração)",tag:"aguardando celebração",c:"var(--g-diprec)",act:"fase-celebracao",active:F.fase==="celebracao"});
+    cards.push({n:exec,l:"Em execução",tag:"objeto em andamento",c:"var(--g-com)",act:"fase-execucao",active:F.fase==="execucao"});
+    cards.push({n:pc,l:"Em prestação de contas",tag:"após a execução",c:"var(--aven)",act:"fase-pc",active:F.fase==="pc"});
+    cards.push({n:fin,l:"Finalizados",tag:"tramitação concluída",c:"var(--conc)",act:"fase-final",active:F.fase==="final"});
+    cards.push({n:venc,l:"Prazo extrapolado",tag:"exigem ação",c:"var(--venc)",act:"sit-vencido",active:F.sit==="vencido"});
+  }
+  const kpel=document.getElementById("kpis");
+  kpel.style.gridTemplateColumns=`repeat(${cards.length},minmax(0,1fr))`;
+  kpel.innerHTML=cards.map(c=>
     `<div class="kpi ${c.act?'clk':''} ${c.active?'active':''}" data-act="${c.act||''}" style="--c:${c.c}"><div class="n ${c.money?'money':''}">${c.n}</div><div class="l">${c.l}</div><div class="tag">${c.tag}</div></div>`
   ).join("");
   document.querySelectorAll(".kpi.clk").forEach(k=>k.addEventListener("click",()=>{
@@ -442,8 +458,7 @@ function renderKPIs(){
     if(a==="all"){Object.keys(F).forEach(x=>F[x]=(x==="bloco"?false:""));["f-sit","f-ger","f-status"].forEach(id=>document.getElementById(id).value="");document.getElementById("f-busca").value="";}
     else if(a==="sit-vencido"){F.sit=(F.sit==="vencido"?"":"vencido");document.getElementById("f-sit").value=F.sit;}
     else if(a==="bloco"){F.bloco=!F.bloco;}
-    else if(a==="fin-sim"){F.fin=(F.fin==="sim"?"":"sim");}
-    else if(a==="fin-nao"){F.fin=(F.fin==="nao"?"":"nao");}
+    else if(a.indexOf("fase-")===0){const fz=a.slice(5);F.fase=(F.fase===fz?"":fz);}
     rerender();
   }));
 }
@@ -501,7 +516,22 @@ function renderGerencias(){
 function daysBadge(p){if(p.st==="vencido")return `<span class="ag-days" style="background:var(--venc-l);color:var(--venc)">${p.dias} dias de atraso</span>`;if(p.st==="avencer")return `<span class="ag-days" style="background:var(--aven-l);color:var(--aven)">faltam ${p.dias} dias</span>`;if(p.st==="noprazo")return `<span class="ag-days" style="background:var(--dia-l);color:var(--dia)">faltam ${p.dias} dias</span>`;return "";}
 let prazoBucket=null;
 function renderPrazos(data){
-  let items=[];data.forEach(r=>r.ativos.forEach(p=>{if(p.prazo&&["vencido","avencer","noprazo"].includes(p.st))items.push({r,p});}));
+  let items=[];data.forEach(r=>{
+    const ativosVal=r.ativos.filter(p=>p.prazo&&["vencido","avencer","noprazo"].includes(p.st));
+    let tecUsada=false;
+    ativosVal.forEach(p=>{
+      if(p.key==="grdoc"||p.key==="gatef"){
+        if(tecUsada)return; tecUsada=true;
+        const tec=ativosVal.filter(x=>x.key==="grdoc"||x.key==="gatef");
+        const rank=x=>x.st==="vencido"?0:x.st==="avencer"?1:2;
+        tec.sort((a,b)=>rank(a)-rank(b)||a.prazo-b.prazo);
+        const w=tec[0];
+        items.push({r,p:{...w,resps:["GRDOC","GATEF"]}});
+      } else {
+        items.push({r,p});
+      }
+    });
+  });
   const fora=items.filter(i=>i.p.st==="vencido");
   const p7=items.filter(i=>i.p.st==="avencer"&&i.p.dias<=7);
   const p30=items.filter(i=>i.p.st==="avencer"&&i.p.dias>7);
@@ -515,9 +545,10 @@ function renderPrazos(data){
   const el=document.getElementById("prazo-list");
   if(!its.length){el.innerHTML='<div class="ag-empty">Nenhum prazo neste período.</div>';return;}
   const half=Math.ceil(its.length/2);
-  const col=arr=>arr.map(({r,p})=>{const dm={d:p.prazo.getDate(),m:MES_PT[p.prazo.getMonth()],y:p.prazo.getFullYear()};const gc=`var(${GER_COLOR[p.resp]||'--brand'})`;
+  const col=arr=>arr.map(({r,p})=>{const dm={d:p.prazo.getDate(),m:MES_PT[p.prazo.getMonth()],y:p.prazo.getFullYear()};
+    const tags=(p.resps||[p.resp]).map(g=>`<span class="gtag" style="background:var(${GER_COLOR[g]||'--brand'});margin-right:3px">${g}</span>`).join("");
     return `<div class="ag-item" data-proc="${r.proc}"><div class="ag-date"><div class="d">${String(dm.d).padStart(2,'0')}</div><div class="m">${dm.m}</div></div>
-    <div class="ag-body"><div class="ag-inst">${r.inst||r.proc}</div><div class="ag-meta"><span class="gtag" style="background:${gc}">${p.resp}</span>${daysBadge(p)}</div></div></div>`;}).join("");
+    <div class="ag-body"><div class="ag-inst">${r.inst||r.proc}</div><div class="ag-meta">${tags}${daysBadge(p)}</div></div></div>`;}).join("");
   el.innerHTML=`<div class="prazo-cols"><div>${col(its.slice(0,half))}</div><div>${col(its.slice(half))}</div></div>`;
   el.querySelectorAll(".ag-item").forEach(it=>it.addEventListener("click",()=>openProc(it.dataset.proc)));
 }
